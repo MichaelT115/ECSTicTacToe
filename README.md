@@ -1,2 +1,2 @@
 # ECSTicTacToe
-Tic Tac Toe Implemented in ECS
+Tic Tac Toe Implemented in Unity ECS.
