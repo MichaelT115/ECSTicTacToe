@@ -8,36 +8,26 @@ public class Testing : MonoBehaviour
 {
     public int width = 3, height = 3;
 
-    private EntityArchetype tileArchetype;
+    private EntityManager entityManager;
 
     public Mesh mesh;
     public Material material;
 
-    RandomizeBoardSystem randomizeBoardSystem;
-
     void Start()
     {
-        EntityManager entityManager = World.Active.EntityManager;
+        entityManager = World.Active.EntityManager;
 
-        tileArchetype = entityManager.CreateArchetype(typeof(OwnerComponent), typeof(Translation));
+        // Create Game State Entity
+        entityManager.CreateEntity(typeof(GameStateComponent));
 
-        CreateGrid(entityManager);
+        // Create Turn Controller Entity
+        CreateTurnControllerEntity();
 
-        randomizeBoardSystem = World.Active.CreateSystem<RandomizeBoardSystem>();
+        // Create Player State Entities
+        CreatePlayerEntities();
 
-        Entity playerEntity = entityManager.CreateEntity(typeof(PlayerTeamComponent), typeof(HasTurnComponent));
-        entityManager.SetComponentData(playerEntity, new PlayerTeamComponent() { team = Team.X });
-
-        Entity gameStateEntity = entityManager.CreateEntity(typeof(GameStateComponent));
-    }
-    
-    [ContextMenu("Randomize")]
-    public void RandomizeGrid()
-    {
-        randomizeBoardSystem.Update();
-        var updateGroup = World.Active.GetOrCreateSystem<BoardEvaluationUpdateGroup>();
-
-        updateGroup.Update();
+        // Create Grid
+        CreateGrid();
     }
 
     public void Update()
@@ -48,8 +38,29 @@ public class Testing : MonoBehaviour
         }
     }
 
-    private void CreateGrid(EntityManager entityManager)
+    private void CreateTurnControllerEntity()
     {
+        Entity turnControllerEntity = entityManager.CreateEntity(typeof(CurrentPlayerIndexComponent));
+        entityManager.AddBuffer<PlayerListElement>(turnControllerEntity);
+    }
+
+    private void CreatePlayerEntities()
+    {
+        // All players have a team component
+        EntityArchetype playerArchetype = entityManager.CreateArchetype(typeof(PlayerTeamComponent));
+
+        Entity playerXEntity = entityManager.CreateEntity(playerArchetype);
+        entityManager.SetComponentData(playerXEntity, new PlayerTeamComponent() { team = Team.X });
+        entityManager.AddComponentData(playerXEntity, new UserControlledComponent());
+
+        Entity playerOEntity = entityManager.CreateEntity(playerArchetype);
+        entityManager.SetComponentData(playerOEntity, new PlayerTeamComponent() { team = Team.O });
+        entityManager.AddComponentData(playerOEntity, new UserControlledComponent());
+    }
+
+    private void CreateGrid()
+    {
+        EntityArchetype tileArchetype = entityManager.CreateArchetype(typeof(OwnerComponent), typeof(Translation));
         Entity gridEntity = entityManager.CreateEntity();
 
         entityManager.AddComponentData(gridEntity, new GridDimensionsComponent()
@@ -62,12 +73,23 @@ public class Testing : MonoBehaviour
         {
             Entity tileEntity = entityManager.CreateEntity(tileArchetype);
             entityManager.SetComponentData(tileEntity, new OwnerComponent() { team = 0 });
-            entityManager.SetComponentData(tileEntity, new Translation() { Value = new float3(i % width, i / height, 0) });
+            entityManager.SetComponentData(tileEntity, new Translation() {
+                Value = new float3(i % width, -(i / height), 0)
+            });
 
             gridComponents[i] = new GridCellData() { entity = tileEntity };
         }
 
         DynamicBuffer<GridCellData> gridBuffer = entityManager.AddBuffer<GridCellData>(gridEntity);
         gridBuffer.AddRange(gridComponents);
+        gridComponents.Dispose();
+    }
+
+    [ContextMenu("Randomize")]
+    public void RandomizeGrid()
+    {
+        World world = World.Active;
+        world.GetOrCreateSystem<RandomizeBoardSystem>().Update();
+        world.GetOrCreateSystem<GridPrintSystem>().Update();
     }
 }

@@ -16,7 +16,7 @@ public class GameStateSystem : ComponentSystem
 
         if (entityManager.HasComponent<TurnSelectionState>(gameStateEntity))
         {
-            SetTurnSystem setTurnSystem = World.Active.GetOrCreateSystem<SetTurnSystem>();
+            StartTurnSystem setTurnSystem = World.Active.GetOrCreateSystem<StartTurnSystem>();
             setTurnSystem.Update();
         }
     }

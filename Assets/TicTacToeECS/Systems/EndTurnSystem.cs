@@ -16,10 +16,10 @@ public class EndTurnSystem : ComponentSystem
         EntityManager entityManager = World.Active.EntityManager;
         Entity gameStateEntity = GetSingletonEntity<GameStateComponent>();
 
-        if (!entityManager.HasComponent(gameStateEntity, typeof(MoveMadeComponent)))
+        if (!entityManager.HasComponent(gameStateEntity, typeof(MadeSelectionComponent)))
             return;
 
-        entityManager.RemoveComponent<MoveMadeComponent>(gameStateEntity);
+        entityManager.RemoveComponent<MadeSelectionComponent>(gameStateEntity);
 
         Entity playerEntity = playerQuery.GetSingletonEntity();
         entityManager.AddComponent(playerEntity, typeof(HasTurnComponent));

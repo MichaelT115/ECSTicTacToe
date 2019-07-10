@@ -1,6 +1,9 @@
 ﻿using Unity.Entities;
 using UnityEngine;
 
+/// <summary>
+/// Create a player selection based of user input.
+/// </summary>
 public class UserPlayerSelectionSystem : ComponentSystem
 {
     EntityQuery playerQuery;
