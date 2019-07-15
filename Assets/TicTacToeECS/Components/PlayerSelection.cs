@@ -1,5 +1,8 @@
 ﻿using Unity.Entities;
 
+/// <summary>
+/// The index of the cell 
+/// </summary>
 struct PlayerSelection : IComponentData
 {
     public static implicit operator PlayerSelection(int selectionIndex) 

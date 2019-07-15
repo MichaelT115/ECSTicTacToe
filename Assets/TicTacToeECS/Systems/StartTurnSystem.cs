@@ -1,5 +1,8 @@
 ﻿using Unity.Entities;
 
+/// <summary>
+/// Starts a turn for the current player.
+/// </summary>
 [DisableAutoCreation]
 public class StartTurnSystem : ComponentSystem
 {
@@ -18,12 +21,11 @@ public class StartTurnSystem : ComponentSystem
         Entity turnControllerEntity = turnControllerQuery.GetSingletonEntity();
 
         // Get Current Player
-        var playerList = entityManager.GetBuffer<PlayerListElement>(turnControllerEntity);
+        DynamicBuffer<PlayerListElement> playerList = entityManager.GetBuffer<PlayerListElement>(turnControllerEntity);
         int currentPlayerIndex = entityManager.GetComponentData<CurrentPlayerIndexComponent>(turnControllerEntity).index;
         Entity currentPlayer = playerList[currentPlayerIndex];
 
         // Give current player turn component
         entityManager.AddComponentData(currentPlayer, new HasTurnComponent());
-
     }
 }

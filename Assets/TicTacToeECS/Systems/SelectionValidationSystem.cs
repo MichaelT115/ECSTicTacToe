@@ -3,19 +3,19 @@ using Unity.Entities;
 
 public class SelectionValidationSystem : ComponentSystem
 {
-    EntityQuery query;
+    EntityQuery playerQuery;
     EntityQuery gridQuery;
 
     protected override void OnCreate()
     {
-        query = GetEntityQuery(typeof(PlayerTeamComponent), typeof(PlayerSelection));
+        playerQuery = GetEntityQuery(typeof(PlayerTeamComponent), typeof(PlayerSelection));
         gridQuery = GetEntityQuery(typeof(GridCellData));
     }
 
     protected override void OnUpdate()
     {
         EntityManager entityManager = World.Active.EntityManager;
-        var playerEntities = query.ToEntityArray(Allocator.TempJob);
+        var playerEntities = playerQuery.ToEntityArray(Allocator.TempJob);
 
         Entity gridEntity = gridQuery.GetSingletonEntity();
         var gridBuffer = entityManager.GetBuffer<GridCellData>(gridEntity).ToNativeArray(Allocator.Temp);
@@ -37,6 +37,7 @@ public class SelectionValidationSystem : ComponentSystem
             }
         }
 
+        playerEntities.Dispose();
         gridBuffer.Dispose();
     }
 }

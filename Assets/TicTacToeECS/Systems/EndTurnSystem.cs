@@ -3,25 +3,57 @@
 public class EndTurnSystem : ComponentSystem
 {
     EntityQuery playerQuery;
-    EntityQuery gridQuery;
+    EntityQuery gameStateQuery;
 
     protected override void OnCreate()
     {
-        playerQuery = GetEntityQuery(typeof(PlayerTeamComponent));
-        gridQuery = GetEntityQuery(typeof(GridCellData));
+        playerQuery = GetEntityQuery(typeof(PlayerTeamComponent), typeof(HasTurnComponent), typeof(CompletedTurnComponent));
+        gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
     }
 
     protected override void OnUpdate()
     {
-        EntityManager entityManager = World.Active.EntityManager;
-        Entity gameStateEntity = GetSingletonEntity<GameStateComponent>();
-
-        if (!entityManager.HasComponent(gameStateEntity, typeof(MadeSelectionComponent)))
-            return;
-
-        entityManager.RemoveComponent<MadeSelectionComponent>(gameStateEntity);
-
         Entity playerEntity = playerQuery.GetSingletonEntity();
-        entityManager.AddComponent(playerEntity, typeof(HasTurnComponent));
+
+        EntityManager.RemoveComponent<HasTurnComponent>(playerEntity);
+        EntityManager.RemoveComponent<PlayerSelection>(playerEntity);
+        EntityManager.RemoveComponent<CompletedTurnComponent>(playerEntity);
+        EntityManager.RemoveComponent<MadeSelectionComponent>(playerEntity);
+
+        EntityManager.AddComponent(gameStateQuery.GetSingletonEntity(), typeof(TurnCompletedComponent));
+    }
+}
+
+struct TurnCompletedComponent : IComponentData { }
+
+public class HandleEndTurn : ComponentSystem
+{
+    protected override void OnUpdate()
+    {
+        // Evaluate Board
+        var boardEvaluationUpdateGroup = World.GetOrCreateSystem<BoardEvaluationUpdateGroup>();
+        boardEvaluationUpdateGroup.Update();
+
+        // Game Ending Conditions
+
+        // If Game Win
+
+        // If Game Draw
+
+        // Set Next Player
+
+        // Start New Turn
+        World.GetOrCreateSystem<StartTurnSystem>().Update();
+    }
+}
+
+/// <summary>
+/// Update Player.
+/// </summary>
+public class NextPlayerSystem : ComponentSystem
+{
+    protected override void OnUpdate()
+    {
+
     }
 }

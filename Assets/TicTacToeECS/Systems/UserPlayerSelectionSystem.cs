@@ -25,9 +25,6 @@ public class UserPlayerSelectionSystem : ComponentSystem
 
         Team playerTeam = entityManager.GetComponentData<PlayerTeamComponent>(playerEntity).team;
 
-        Entity gridEntity = gridQuery.GetSingletonEntity();
-        DynamicBuffer<GridCellData> gridBuffer = entityManager.GetBuffer<GridCellData>(gridEntity);
-
         if (Input.GetKeyDown(KeyCode.Alpha1))
         {
             entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 0 });

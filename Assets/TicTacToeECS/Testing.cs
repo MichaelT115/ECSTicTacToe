@@ -1,5 +1,6 @@
 ﻿using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
@@ -15,6 +16,8 @@ public class Testing : MonoBehaviour
 
     void Start()
     {
+        Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.Full);
+
         entityManager = World.Active.EntityManager;
 
         // Create Game State Entity
@@ -28,6 +31,8 @@ public class Testing : MonoBehaviour
 
         // Create Grid
         CreateGrid();
+
+        World.Active.GetOrCreateSystem<StartTurnSystem>().Update();
     }
 
     public void Update()
@@ -46,16 +51,7 @@ public class Testing : MonoBehaviour
 
     private void CreatePlayerEntities()
     {
-        // All players have a team component
-        EntityArchetype playerArchetype = entityManager.CreateArchetype(typeof(PlayerTeamComponent));
-
-        Entity playerXEntity = entityManager.CreateEntity(playerArchetype);
-        entityManager.SetComponentData(playerXEntity, new PlayerTeamComponent() { team = Team.X });
-        entityManager.AddComponentData(playerXEntity, new UserControlledComponent());
-
-        Entity playerOEntity = entityManager.CreateEntity(playerArchetype);
-        entityManager.SetComponentData(playerOEntity, new PlayerTeamComponent() { team = Team.O });
-        entityManager.AddComponentData(playerOEntity, new UserControlledComponent());
+        World.Active.CreateSystem<CreatePlayersSystem>().Update();
     }
 
     private void CreateGrid()
@@ -91,5 +87,29 @@ public class Testing : MonoBehaviour
         World world = World.Active;
         world.GetOrCreateSystem<RandomizeBoardSystem>().Update();
         world.GetOrCreateSystem<GridPrintSystem>().Update();
+    }
+}
+
+[DisableAutoCreation]
+public class CreatePlayersSystem : ComponentSystem
+{
+
+    protected override void OnUpdate()
+    {
+        var entityQuery = GetEntityQuery(typeof(PlayerListElement));
+        var turnControllerEntity = entityQuery.GetSingletonEntity();  
+
+        // All players have a team component
+        EntityArchetype playerArchetype = EntityManager.CreateArchetype(typeof(PlayerTeamComponent));
+
+        Entity playerXEntity = EntityManager.CreateEntity(playerArchetype);
+        EntityManager.SetComponentData(playerXEntity, new PlayerTeamComponent() { team = Team.X });
+        EntityManager.AddComponentData(playerXEntity, new UserControlledComponent());
+
+        Entity playerOEntity = EntityManager.CreateEntity(playerArchetype);
+        EntityManager.SetComponentData(playerOEntity, new PlayerTeamComponent() { team = Team.O });
+        EntityManager.AddComponentData(playerOEntity, new UserControlledComponent());
+        var buffer = EntityManager.GetBuffer<PlayerListElement>(turnControllerEntity);
+        buffer.Add(new PlayerListElement() { playerEntity = playerOEntity });
     }
 }
