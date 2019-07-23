@@ -6,7 +6,8 @@ using UnityEngine;
 [UpdateInGroup(typeof(BoardEvaluationUpdateGroup))]
 public class BoardEvaluationColumnsSystem : JobComponentSystem
 {
-    EntityQuery query;
+    EntityQuery gridQuery;
+    EntityQuery gameStateQuery;
 
     private struct CheckColumnJob : IJobParallelFor
     {
@@ -43,19 +44,36 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
         }
     }
 
+    private struct CheckForWinner : IJob
+    {
+        [WriteOnly] public NativeArray<Team> winners;
+        [WriteOnly] public Team winner;
+        public void Execute()
+        {
+            for (int i = 0; i < winners.Length; ++i)
+            {
+                if (winners[i] != Team.EMPTY)
+                {
+                    winner = winners[i];
+                    return;
+                }
+            }
+        }
+    }
+
     protected override void OnCreate()
     {
-        query = GetEntityQuery(typeof(GridCellData));
+        gridQuery = GetEntityQuery(typeof(GridCellData));
+        gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
     }
 
     protected override JobHandle OnUpdate(JobHandle inputDeps)
     {
-        EntityManager entityManager = World.Active.EntityManager;
-        Entity gridEntity = query.GetSingletonEntity();
-        GridDimensionsComponent gridDimensions = entityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
+        Entity gridEntity = gridQuery.GetSingletonEntity();
+        GridDimensionsComponent gridDimensions = EntityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
         int width = gridDimensions.columnCount;
         int height = gridDimensions.rowCount;
-        DynamicBuffer<GridCellData> gridBuffer = entityManager.GetBuffer<GridCellData>(gridEntity);
+        DynamicBuffer<GridCellData> gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
 
         CheckColumnJob checkColumnJob = new CheckColumnJob()
         {
@@ -66,9 +84,13 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
             winner = new NativeArray<Team>(gridBuffer.Length, Allocator.TempJob)
         };
         JobHandle jobHandle = checkColumnJob.Schedule(height, 1, inputDeps);
-        jobHandle.Complete();
 
         // Find Winner
+        CheckForWinner checkForWinnerJob = new CheckForWinner()
+        {
+            winners = checkColumnJob.winner,
+        };
+
         Team winner = Team.EMPTY;
         for (int i = 0; i < checkColumnJob.winner.Length; ++i)
         {
@@ -82,7 +104,8 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
 
         if (winner != Team.EMPTY)
         {
-            Debug.Log("Winner: " + winner);
+            Debug.Log($"Vertical Match Found: {winner}");
+            EntityManager.AddComponentData(gameStateQuery.GetSingletonEntity(), new MatchFound() { team = winner });
         }
 
         return jobHandle;

@@ -12,7 +12,7 @@ public class GridRenderSystem : ComponentSystem
 
     protected override void OnCreate()
     {
-        Testing testing = Object.FindObjectOfType<Testing>();
+        Bootstrapper testing = Object.FindObjectOfType<Bootstrapper>();
         Material material = testing.material;
         mesh = testing.mesh;
         query = GetEntityQuery(typeof(OwnerComponent), typeof(Translation));

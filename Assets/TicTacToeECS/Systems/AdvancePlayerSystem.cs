@@ -1,15 +1,18 @@
 ﻿using Unity.Entities;
+using Unity.Jobs;
 
 /// <summary>
-/// Starts a turn for the current player.
+/// Update Player.
 /// </summary>
 [DisableAutoCreation]
-public class StartTurnSystem : ComponentSystem
+public class AdvancePlayerSystem : ComponentSystem
 {
     EntityQuery turnControllerQuery;
+    EntityQuery playerQuery;
 
     protected override void OnCreate()
     {
+        playerQuery = GetEntityQuery(typeof(PlayerTeamComponent));
         turnControllerQuery = GetEntityQuery(typeof(CurrentPlayerIndexComponent), typeof(PlayerListElement));
     }
 
@@ -18,11 +21,11 @@ public class StartTurnSystem : ComponentSystem
         Entity turnControllerEntity = turnControllerQuery.GetSingletonEntity();
 
         // Get Current Player
-        DynamicBuffer<PlayerListElement> playerList = EntityManager.GetBuffer<PlayerListElement>(turnControllerEntity);
+        int playerCount = EntityManager.GetBuffer<PlayerListElement>(turnControllerEntity).Length;
         int currentPlayerIndex = EntityManager.GetComponentData<CurrentPlayerIndexComponent>(turnControllerEntity).index;
-        Entity currentPlayer = playerList[currentPlayerIndex];
-
-        // Give current player turn component
-        EntityManager.AddComponentData(currentPlayer, new HasTurnComponent());
+        EntityManager.SetComponentData(turnControllerEntity, new CurrentPlayerIndexComponent()
+        {
+            index = (currentPlayerIndex + 1) % playerCount
+        });
     }
 }

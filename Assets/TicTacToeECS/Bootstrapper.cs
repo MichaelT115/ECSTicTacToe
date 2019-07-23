@@ -1,11 +1,10 @@
 ﻿using Unity.Collections;
 using Unity.Entities;
-using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
 
-public class Testing : MonoBehaviour
+public class Bootstrapper : MonoBehaviour
 {
     public int width = 3, height = 3;
 
@@ -87,29 +86,5 @@ public class Testing : MonoBehaviour
         World world = World.Active;
         world.GetOrCreateSystem<RandomizeBoardSystem>().Update();
         world.GetOrCreateSystem<GridPrintSystem>().Update();
-    }
-}
-
-[DisableAutoCreation]
-public class CreatePlayersSystem : ComponentSystem
-{
-
-    protected override void OnUpdate()
-    {
-        var entityQuery = GetEntityQuery(typeof(PlayerListElement));
-        var turnControllerEntity = entityQuery.GetSingletonEntity();  
-
-        // All players have a team component
-        EntityArchetype playerArchetype = EntityManager.CreateArchetype(typeof(PlayerTeamComponent));
-
-        Entity playerXEntity = EntityManager.CreateEntity(playerArchetype);
-        EntityManager.SetComponentData(playerXEntity, new PlayerTeamComponent() { team = Team.X });
-        EntityManager.AddComponentData(playerXEntity, new UserControlledComponent());
-
-        Entity playerOEntity = EntityManager.CreateEntity(playerArchetype);
-        EntityManager.SetComponentData(playerOEntity, new PlayerTeamComponent() { team = Team.O });
-        EntityManager.AddComponentData(playerOEntity, new UserControlledComponent());
-        var buffer = EntityManager.GetBuffer<PlayerListElement>(turnControllerEntity);
-        buffer.Add(new PlayerListElement() { playerEntity = playerOEntity });
     }
 }

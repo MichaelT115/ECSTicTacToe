@@ -6,7 +6,8 @@ using UnityEngine;
 [UpdateInGroup(typeof(BoardEvaluationUpdateGroup))]
 public class BoardEvaluationRowsSystem : JobComponentSystem
 {
-    EntityQuery query;
+    EntityQuery gridQuery;
+    EntityQuery gameStateQuery;
 
     private struct CheckRowJob : IJobParallelFor
     {
@@ -44,17 +45,17 @@ public class BoardEvaluationRowsSystem : JobComponentSystem
 
     protected override void OnCreate()
     {
-        query = GetEntityQuery(typeof(GridCellData));
+        gridQuery = GetEntityQuery(typeof(GridCellData));
+        gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
     }
 
     protected override JobHandle OnUpdate(JobHandle inputDeps)
     {
-        EntityManager entityManager = World.Active.EntityManager;
-        Entity gridEntity = query.GetSingletonEntity();
-        GridDimensionsComponent gridDimensions = entityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
+        Entity gridEntity = gridQuery.GetSingletonEntity();
+        GridDimensionsComponent gridDimensions = EntityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
         int width = gridDimensions.columnCount;
         int height = gridDimensions.rowCount;
-        DynamicBuffer<GridCellData> gridBuffer = entityManager.GetBuffer<GridCellData>(gridEntity);
+        DynamicBuffer<GridCellData> gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
 
         CheckRowJob checkRowJob = new CheckRowJob()
         {
@@ -81,8 +82,8 @@ public class BoardEvaluationRowsSystem : JobComponentSystem
         if (winner != Team.EMPTY)
         {
             Debug.Log("Winner: " + winner);
+            EntityManager.AddComponentData(gameStateQuery.GetSingletonEntity(), new MatchFound() { team = winner });
         }
-
 
         return jobHandle;
     }

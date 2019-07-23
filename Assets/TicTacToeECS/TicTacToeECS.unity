@@ -131,7 +131,7 @@ GameObject:
   - component: {fileID: 471463349}
   - component: {fileID: 471463348}
   m_Layer: 0
-  m_Name: Testing
+  m_Name: Bootstrapper
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -146,7 +146,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 471463347}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a722e7c7572d22c4091283e1c29d4385, type: 3}
+  m_Script: {fileID: 11500000, guid: c36114cd713d22948bdc6ce58ef49a83, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   width: 3
