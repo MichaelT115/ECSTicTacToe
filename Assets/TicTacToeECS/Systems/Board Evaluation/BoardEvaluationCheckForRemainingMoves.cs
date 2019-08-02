@@ -2,33 +2,57 @@
 using Unity.Entities;
 using Unity.Jobs;
 
+/// <summary>
+/// Checks if there are any remain moves on the board and adds the NoMovesLeft component,.
+/// </summary>
 [UpdateInGroup(typeof(BoardEvaluationUpdateGroup))]
 public class BoardEvaluationCheckForRemainingMoves : JobComponentSystem
 {
     EntityQuery ownerQuery;
     EntityQuery gameStateQuery;
 
+    EndBoardEvaluationCommandBufferSystem commandBufferSystem;
+
+    struct CheckForUnownedCellsJob : IJob
+    {
+        [ReadOnly] public Entity gameStateEntity;
+        [DeallocateOnJobCompletion]
+        [ReadOnly] public NativeArray<OwnerComponent> cellOwners;
+        [WriteOnly] public EntityCommandBuffer.Concurrent commandBuffer;
+
+        public void Execute()
+        {
+            foreach (var owner in cellOwners)
+            {
+                if (owner.team == Team.EMPTY)
+                {
+                    return;
+                }
+            }
+
+            commandBuffer.AddComponent<NoMovesLeft>(0, gameStateEntity);
+        }
+    }
+
     protected override void OnCreate()
     {
         ownerQuery = GetEntityQuery(typeof(OwnerComponent));
         gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
+
+        commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
     }
 
     protected override JobHandle OnUpdate(JobHandle inputDeps)
     {
-        var owners = ownerQuery.ToComponentDataArray<OwnerComponent>(Allocator.TempJob);
-        foreach (var owner in owners)
+        JobHandle jobHandle = new CheckForUnownedCellsJob()
         {
-            if (owner.team == Team.EMPTY)
-            {
-                owners.Dispose();
-                return inputDeps;
-            }
-        }
-        owners.Dispose();
+            cellOwners = ownerQuery.ToComponentDataArray<OwnerComponent>(Allocator.TempJob),
+            gameStateEntity = gameStateQuery.GetSingletonEntity(),
+            commandBuffer = commandBufferSystem.CreateCommandBuffer().ToConcurrent()
+        }.Schedule();
 
-        EntityManager.AddComponentData(gameStateQuery.GetSingletonEntity(), new NoMovesLeft());
+        commandBufferSystem.AddJobHandleForProducer(jobHandle);
 
-        return inputDeps;
+        return jobHandle;
     }
 }

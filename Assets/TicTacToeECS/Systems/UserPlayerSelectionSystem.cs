@@ -1,74 +1,93 @@
-﻿using Unity.Entities;
+﻿using Unity.Collections;
+using Unity.Entities;
+using Unity.Jobs;
+using Unity.Mathematics;
+using Unity.Rendering;
 using UnityEngine;
 
 /// <summary>
 /// Create a player selection based of user input.
 /// </summary>
-public class UserPlayerSelectionSystem : ComponentSystem
+public class UserPlayerSelectionSystem : JobComponentSystem
 {
     EntityQuery playerQuery;
-    EntityQuery gridQuery;
+    EntityQuery nonFocusedCellsQuery;
+    EntityQuery focuesedCellsQuery;
+
+    private struct UnfocusCellsThatDoNotIntersectPointJob : IJobForEachWithEntity_EC<RectangleComponent>
+    {
+        [ReadOnly] public float2 point;
+        [ReadOnly] public EntityCommandBuffer.Concurrent commandBuffer;
+
+        public void Execute(Entity entity, int index, ref RectangleComponent rectangle)
+        {
+            if (!CollisionHelper.Intersect(point, rectangle))
+            {
+                commandBuffer.RemoveComponent<FocusComponent>(index,  entity);
+            }
+        }
+    }
+
+    private struct FocusCellsThatIntersectPointJob : IJobForEachWithEntity_EC<RectangleComponent>
+    {
+        [ReadOnly] public float2 point;
+        [ReadOnly] public EntityCommandBuffer.Concurrent commandBuffer;
+
+        public void Execute(Entity entity, int index, ref RectangleComponent rectangle)
+        {
+            if (CollisionHelper.Intersect(point, rectangle))
+            {
+                commandBuffer.AddComponent(index, entity, new FocusComponent());
+            }
+        }
+    }
 
     protected override void OnCreate()
     {
         playerQuery = GetEntityQuery(typeof(PlayerTeamComponent), typeof(HasTurnComponent));
-        gridQuery = GetEntityQuery(typeof(GridCellData));
+        nonFocusedCellsQuery = GetEntityQuery(new EntityQueryDesc()
+        {
+            All = new ComponentType[] { typeof(RectangleComponent) },
+            None = new ComponentType[] { typeof(FocusComponent) }
+        });
+        focuesedCellsQuery = GetEntityQuery(new EntityQueryDesc()
+        {
+            All = new ComponentType[] { typeof(RectangleComponent), typeof(FocusComponent) }
+        });
+
+        RequireForUpdate(playerQuery);
     }
 
-    protected override void OnUpdate()
+    protected override JobHandle OnUpdate(JobHandle inputDeps)
     {
-        EntityManager entityManager = World.Active.EntityManager;
-        if (playerQuery.CalculateLength() == 0)
-            return;
-
         Entity playerEntity = playerQuery.GetSingletonEntity();
+        Team playerTeam = EntityManager.GetComponentData<PlayerTeamComponent>(playerEntity).team;
 
-        Team playerTeam = entityManager.GetComponentData<PlayerTeamComponent>(playerEntity).team;
+        Vector3 mousePosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        float2 position = new float2(mousePosition.x, mousePosition.y);
 
-        if (Input.GetKeyDown(KeyCode.Alpha1))
+        BeginSimulationEntityCommandBufferSystem entityCommandBufferSystem = World.GetOrCreateSystem<BeginSimulationEntityCommandBufferSystem>();
+        new FocusCellsThatIntersectPointJob()
         {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 0 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha2))
+            point = position,
+            commandBuffer = entityCommandBufferSystem.CreateCommandBuffer().ToConcurrent()
+        }.Schedule(nonFocusedCellsQuery).Complete();
+
+        new UnfocusCellsThatDoNotIntersectPointJob()
         {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 1 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha3))
+            point = position,
+            commandBuffer = entityCommandBufferSystem.CreateCommandBuffer().ToConcurrent()
+        }.Schedule(focuesedCellsQuery).Complete();
+
+        if (focuesedCellsQuery.CalculateEntityCount() > 0 && Input.GetKeyDown(KeyCode.Mouse0))
         {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 2 });
-            return;
+            var focusedCells = focuesedCellsQuery.ToEntityArray(Allocator.TempJob);
+            EntityManager.AddComponentData(playerEntity, new PlayerSelection() { selectedEntity = focusedCells[0] });
+            focusedCells.Dispose();
         }
-        if (Input.GetKeyDown(KeyCode.Alpha4))
-        {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 3 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha5))
-        {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 4 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha6))
-        {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 5 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha7))
-        {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 6 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha8))
-        {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 7 });
-            return;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha9))
-        {
-            entityManager.AddComponentData(playerEntity, new PlayerSelection() { selctionIndex = 8 });
-            return;
-        }
+
+        return inputDeps;
     }
 }
+
+public struct FocusComponent : IComponentData { };

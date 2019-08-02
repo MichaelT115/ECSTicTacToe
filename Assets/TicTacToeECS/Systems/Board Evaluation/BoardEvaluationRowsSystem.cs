@@ -1,7 +1,6 @@
 ﻿using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
-using UnityEngine;
 
 [UpdateInGroup(typeof(BoardEvaluationUpdateGroup))]
 public class BoardEvaluationRowsSystem : JobComponentSystem
@@ -9,37 +8,69 @@ public class BoardEvaluationRowsSystem : JobComponentSystem
     EntityQuery gridQuery;
     EntityQuery gameStateQuery;
 
-    private struct CheckRowJob : IJobParallelFor
+    private struct FindRowMatchesJob : IJobParallelFor
     {
         [ReadOnly] public ComponentDataFromEntity<OwnerComponent> componentDataFromEntity;
-        [ReadOnly] public int width;
+        [ReadOnly] public GridDimensionsComponent gridDimensions;
+        [ReadOnly] public int sequenceLength;
         [ReadOnly] public DynamicBuffer<GridCellData> gridBuffer;
-        [WriteOnly] public NativeArray<Team> winner;
+
+        [WriteOnly] public EntityCommandBuffer.Concurrent commandBuffer;
 
         public void Execute(int row)
         {
+            int width = gridDimensions.columnCount;
+            int height = gridDimensions.rowCount;
+
+
             int firstInRowIndex = row * width;
-            int lastInRowIndex = (row + 1) * width - 1;
+            int lastInRowIndex = firstInRowIndex + width - 1;
 
-            Team previousTeam = componentDataFromEntity[gridBuffer[firstInRowIndex].entity].team;
+            int prevIndex = firstInRowIndex;
+            int currentIndex = firstInRowIndex + 1;
+            int matchStartIndex = firstInRowIndex;
+            int count = 1;
 
-            if (previousTeam == Team.EMPTY)
-                return;
+            Team currentTeam,
+                previousTeam = componentDataFromEntity[gridBuffer[firstInRowIndex].entity].team;
 
-            for (int i = firstInRowIndex + 1; i <= lastInRowIndex; ++i)
+            while (currentIndex <= lastInRowIndex)
             {
-                Team team = componentDataFromEntity[gridBuffer[i].entity].team;
+                currentTeam = componentDataFromEntity[gridBuffer[currentIndex].entity].team;
 
-                // Empty Space
-                if (team == Team.EMPTY)
-                    return;
+                if (currentTeam != previousTeam)
+                {
+                    if (previousTeam != Team.EMPTY && count >= sequenceLength)
+                    {
+                        Entity entity = commandBuffer.CreateEntity(row);
+                        commandBuffer.AddComponent(row, entity, new MatchComponent()
+                        {
+                            startIndex = matchStartIndex,
+                            endIndex = prevIndex,
+                            matchType = MatchComponent.MatchType.HORIZONTAL
+                        });
+                    }
 
-                // Does not match previous cell.
-                if (team != previousTeam)
-                    return;
+                    matchStartIndex = currentIndex;
+                    previousTeam = currentTeam;
+                    count = 0;
+                }
+
+                prevIndex = currentIndex;
+                ++currentIndex;
+                ++count;
             }
 
-            winner[row] = previousTeam;
+            if (previousTeam != Team.EMPTY && count >= sequenceLength)
+            {
+                Entity entity = commandBuffer.CreateEntity(row);
+                commandBuffer.AddComponent(row, entity, new MatchComponent()
+                {
+                    startIndex = matchStartIndex,
+                    endIndex = prevIndex,
+                    matchType = MatchComponent.MatchType.HORIZONTAL
+                });
+            }
         }
     }
 
@@ -53,37 +84,22 @@ public class BoardEvaluationRowsSystem : JobComponentSystem
     {
         Entity gridEntity = gridQuery.GetSingletonEntity();
         GridDimensionsComponent gridDimensions = EntityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
-        int width = gridDimensions.columnCount;
-        int height = gridDimensions.rowCount;
-        DynamicBuffer<GridCellData> gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
 
-        CheckRowJob checkRowJob = new CheckRowJob()
+        EndBoardEvaluationCommandBufferSystem commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
+
+        JobHandle jobHandle =  new FindRowMatchesJob()
         {
             componentDataFromEntity = GetComponentDataFromEntity<OwnerComponent>(true),
-            width = width,
-            gridBuffer = gridBuffer,
-            winner = new NativeArray<Team>(gridBuffer.Length, Allocator.TempJob)
-        };
-        JobHandle jobHandle = checkRowJob.Schedule(height, 1, inputDeps);
-        jobHandle.Complete();
 
-        // Find Winner
-        Team winner = Team.EMPTY;
-        for (int i = 0; i < checkRowJob.winner.Length; ++i)
-        {
-            if (checkRowJob.winner[i] != Team.EMPTY)
-            {
-                winner = checkRowJob.winner[i];
-                break;
-            }
-        }
-        checkRowJob.winner.Dispose();
+            gridDimensions = gridDimensions,
 
-        if (winner != Team.EMPTY)
-        {
-            Debug.Log("Winner: " + winner);
-            EntityManager.AddComponentData(gameStateQuery.GetSingletonEntity(), new MatchFound() { team = winner });
-        }
+            gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity),
+            sequenceLength = 1,
+
+            commandBuffer = commandBufferSystem.CreateCommandBuffer().ToConcurrent()
+        }.Schedule(gridDimensions.rowCount, 1);
+
+        commandBufferSystem.AddJobHandleForProducer(jobHandle);
 
         return jobHandle;
     }

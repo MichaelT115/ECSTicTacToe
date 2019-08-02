@@ -9,7 +9,11 @@ public class EndTurnConditionSystem : ComponentSystem
 
     protected override void OnCreate()
     {
-        playerQuery = GetEntityQuery(typeof(PlayerTeamComponent), typeof(HasTurnComponent), typeof(MadeSelectionComponent));
+        playerQuery = GetEntityQuery(new EntityQueryDesc()
+        {
+            All = new ComponentType[] { typeof(PlayerTeamComponent), typeof(HasTurnComponent), typeof(MadeSelectionComponent) },
+            None = new ComponentType[] { typeof(CompletedTurnComponent) }
+        });
         RequireForUpdate(playerQuery);
     }
 

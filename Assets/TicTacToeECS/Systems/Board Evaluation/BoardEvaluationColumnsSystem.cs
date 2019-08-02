@@ -1,62 +1,76 @@
 ﻿using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
-using UnityEngine;
 
+/// <summary>
+/// 
+/// </summary>
 [UpdateInGroup(typeof(BoardEvaluationUpdateGroup))]
 public class BoardEvaluationColumnsSystem : JobComponentSystem
 {
     EntityQuery gridQuery;
     EntityQuery gameStateQuery;
-
-    private struct CheckColumnJob : IJobParallelFor
+    
+    private struct FindMatchesInColumn : IJobParallelFor
     {
         [ReadOnly] public ComponentDataFromEntity<OwnerComponent> componentDataFromEntity;
-        [ReadOnly] public int width;
-        [ReadOnly] public int height;
+        [ReadOnly] public GridDimensionsComponent gridDimensions;
+        [ReadOnly] public int sequenceLength;
         [ReadOnly] public DynamicBuffer<GridCellData> gridBuffer;
-        [WriteOnly] public NativeArray<Team> winner;
+
+        [WriteOnly] public EntityCommandBuffer.Concurrent commandBuffer;
 
         public void Execute(int column)
         {
-            int firstInColumnIndex = column;
-            int lastInColumnIndex = column + (height - 1) * width;
+            int width = gridDimensions.columnCount;
+            int height = gridDimensions.rowCount;
 
-            Team previousTeam = componentDataFromEntity[gridBuffer[firstInColumnIndex].entity].team;
+            int lastInColumnIndex = column + (height - 1) * width,
+                currentIndex = column + 1,
+                prevIndex = column,
+                matchStartIndex = column,
+                count = 1;
 
-            if (previousTeam == Team.EMPTY)
-                return;
+            Team currentTeam,
+                previousTeam = componentDataFromEntity[gridBuffer[column].entity].team;
 
-            for (int i = firstInColumnIndex; i <= lastInColumnIndex; i += width)
+            while (currentIndex <= lastInColumnIndex)
             {
-                Team team = componentDataFromEntity[gridBuffer[i].entity].team;
+                currentTeam = componentDataFromEntity[gridBuffer[currentIndex].entity].team;
 
-                // Empty Space
-                if (team == Team.EMPTY)
-                    return;
+                if (currentTeam != previousTeam)
+                {
+                    if (previousTeam != Team.EMPTY && count >= sequenceLength)
+                    {
+                        Entity entity = commandBuffer.CreateEntity(column);
+                        commandBuffer.AddComponent(column, entity, new MatchComponent()
+                        {
+                            startIndex = matchStartIndex,
+                            endIndex = prevIndex,
+                            matchType = MatchComponent.MatchType.VERTICAL
+                        });
+                    }
 
-                // Does not match previous cell.
-                if (team != previousTeam)
-                    return;
+                    matchStartIndex = currentIndex;
+                    previousTeam = currentTeam;
+                    count = 0;
+                }
+
+
+                prevIndex = currentIndex;
+                currentIndex += width;
+                ++count;
             }
 
-            winner[column] = previousTeam;
-        }
-    }
-
-    private struct CheckForWinner : IJob
-    {
-        [WriteOnly] public NativeArray<Team> winners;
-        [WriteOnly] public Team winner;
-        public void Execute()
-        {
-            for (int i = 0; i < winners.Length; ++i)
+            if (previousTeam != Team.EMPTY && count >= sequenceLength)
             {
-                if (winners[i] != Team.EMPTY)
+                Entity entity = commandBuffer.CreateEntity(column);
+                commandBuffer.AddComponent(column, entity, new MatchComponent()
                 {
-                    winner = winners[i];
-                    return;
-                }
+                    startIndex = matchStartIndex,
+                    endIndex = prevIndex,
+                    matchType = MatchComponent.MatchType.VERTICAL                  
+                });
             }
         }
     }
@@ -71,42 +85,22 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
     {
         Entity gridEntity = gridQuery.GetSingletonEntity();
         GridDimensionsComponent gridDimensions = EntityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
-        int width = gridDimensions.columnCount;
-        int height = gridDimensions.rowCount;
-        DynamicBuffer<GridCellData> gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
 
-        CheckColumnJob checkColumnJob = new CheckColumnJob()
+        EndBoardEvaluationCommandBufferSystem commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
+
+        JobHandle jobHandle = new FindMatchesInColumn()
         {
             componentDataFromEntity = GetComponentDataFromEntity<OwnerComponent>(true),
-            width = width,
-            height = height,
-            gridBuffer = gridBuffer,
-            winner = new NativeArray<Team>(gridBuffer.Length, Allocator.TempJob)
-        };
-        JobHandle jobHandle = checkColumnJob.Schedule(height, 1, inputDeps);
+          
+            gridDimensions = gridDimensions,
 
-        // Find Winner
-        CheckForWinner checkForWinnerJob = new CheckForWinner()
-        {
-            winners = checkColumnJob.winner,
-        };
+            gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity),
+            sequenceLength = 1,
 
-        Team winner = Team.EMPTY;
-        for (int i = 0; i < checkColumnJob.winner.Length; ++i)
-        {
-            if (checkColumnJob.winner[i] != Team.EMPTY)
-            {
-                winner = checkColumnJob.winner[i];
-                break;
-            }
-        }
-        checkColumnJob.winner.Dispose();
+            commandBuffer = commandBufferSystem.CreateCommandBuffer().ToConcurrent()
+        }.Schedule(gridDimensions.rowCount, 1);
 
-        if (winner != Team.EMPTY)
-        {
-            Debug.Log($"Vertical Match Found: {winner}");
-            EntityManager.AddComponentData(gameStateQuery.GetSingletonEntity(), new MatchFound() { team = winner });
-        }
+        commandBufferSystem.AddJobHandleForProducer(jobHandle);
 
         return jobHandle;
     }

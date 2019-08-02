@@ -1,5 +1,6 @@
 ﻿using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using UnityEngine;
 
 public class HandleEndTurn : ComponentSystem
@@ -28,7 +29,10 @@ public class HandleEndTurn : ComponentSystem
         playerEntities.Dispose();
 
         // Evaluate Board
+        World.GetOrCreateSystem<StartBoardEvaluationCleanExistingMatchesSystem>().Update();
         World.GetOrCreateSystem<BoardEvaluationUpdateGroup>().Update();
+        World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>().Update();
+
 
         // Game Ending Conditions
         World.GetOrCreateSystem<GameEvaluationUpdateGroup>().Update();
@@ -53,7 +57,6 @@ public class HandleEndTurn : ComponentSystem
 
         // Advance Turn
         StartNextTurn();
-        Debug.Break();
     }
 
     private void StartNextTurn()
