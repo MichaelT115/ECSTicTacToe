@@ -1,6 +1,6 @@
 ﻿using Unity.Entities;
 
-struct MatchComponent : IComponentData
+public struct MatchComponent : IComponentData
 {
 
 

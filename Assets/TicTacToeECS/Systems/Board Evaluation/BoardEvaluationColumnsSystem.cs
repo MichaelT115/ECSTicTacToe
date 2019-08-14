@@ -10,45 +10,45 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
 {
     EntityQuery gridQuery;
     EntityQuery gameStateQuery;
-    
-    private struct FindMatchesInColumn : IJobParallelFor
-    {
-        [ReadOnly] public ComponentDataFromEntity<OwnerComponent> componentDataFromEntity;
-        [ReadOnly] public GridDimensionsComponent gridDimensions;
-        [ReadOnly] public int sequenceLength;
-        [ReadOnly] public DynamicBuffer<GridCellData> gridBuffer;
+    EntityQuery gameRulesQuery;
 
-        [WriteOnly] public EntityCommandBuffer.Concurrent commandBuffer;
+    /// <summary>
+    /// Find all the matches that are column-wise.
+    /// </summary>
+    public struct FindMatchesInColumn : IJobParallelFor
+    {
+        [ReadOnly] public int rowCount;
+        [ReadOnly] public int colCount;
+        [ReadOnly] public int matchSize;
+        [ReadOnly] public NativeArray<OwnerComponent> board;
+
+        [WriteOnly] public NativeQueue<MatchComponent>.ParallelWriter matchesFound;
 
         public void Execute(int column)
         {
-            int width = gridDimensions.columnCount;
-            int height = gridDimensions.rowCount;
+            int firstInColumnIndex = column;
+            int lastInColumnIndex = firstInColumnIndex + (rowCount - 1) * colCount;
 
-            int lastInColumnIndex = column + (height - 1) * width,
-                currentIndex = column + 1,
-                prevIndex = column,
-                matchStartIndex = column,
-                count = 1;
+            int currentIndex = firstInColumnIndex + colCount;
+            int prevIndex = firstInColumnIndex;
 
-            Team currentTeam,
-                previousTeam = componentDataFromEntity[gridBuffer[column].entity].team;
+            int matchStartIndex = firstInColumnIndex;
+            int count = 1;
+
+            Team currentTeam = default;
+            Team previousTeam = default;
 
             while (currentIndex <= lastInColumnIndex)
             {
-                currentTeam = componentDataFromEntity[gridBuffer[currentIndex].entity].team;
+                currentTeam = board[currentIndex];
+                previousTeam = board[matchStartIndex];
 
+                // Is the match sequence broken.
                 if (currentTeam != previousTeam)
                 {
-                    if (previousTeam != Team.EMPTY && count >= sequenceLength)
+                    if (previousTeam != Team.EMPTY && count >= matchSize)
                     {
-                        Entity entity = commandBuffer.CreateEntity(column);
-                        commandBuffer.AddComponent(column, entity, new MatchComponent()
-                        {
-                            startIndex = matchStartIndex,
-                            endIndex = prevIndex,
-                            matchType = MatchComponent.MatchType.VERTICAL
-                        });
+                        AddMatch(previousTeam, matchStartIndex, prevIndex);
                     }
 
                     matchStartIndex = currentIndex;
@@ -58,20 +58,25 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
 
 
                 prevIndex = currentIndex;
-                currentIndex += width;
+                currentIndex += colCount;
                 ++count;
             }
 
-            if (previousTeam != Team.EMPTY && count >= sequenceLength)
+            if (previousTeam != Team.EMPTY && count >= matchSize)
             {
-                Entity entity = commandBuffer.CreateEntity(column);
-                commandBuffer.AddComponent(column, entity, new MatchComponent()
-                {
-                    startIndex = matchStartIndex,
-                    endIndex = prevIndex,
-                    matchType = MatchComponent.MatchType.VERTICAL                  
-                });
+                AddMatch(previousTeam, matchStartIndex, prevIndex);
             }
+        }
+
+        private void AddMatch(Team team, int startIndex, int prevIndex)
+        {
+            matchesFound.Enqueue(new MatchComponent()
+            {
+                team = team,
+                startIndex = startIndex,
+                endIndex = prevIndex,
+                matchType = MatchComponent.MatchType.VERTICAL
+            });
         }
     }
 
@@ -79,6 +84,7 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
     {
         gridQuery = GetEntityQuery(typeof(GridCellData));
         gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
+        gameRulesQuery = GetEntityQuery(typeof(MatchSizeRuleComponent));
     }
 
     protected override JobHandle OnUpdate(JobHandle inputDeps)
@@ -88,20 +94,36 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
 
         EndBoardEvaluationCommandBufferSystem commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
 
+        MatchSizeRuleComponent matchSize = gameRulesQuery.GetSingleton<MatchSizeRuleComponent>();
+
+        DynamicBuffer<GridCellData> buffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
+        NativeArray<OwnerComponent> ownerGrid = new NativeArray<OwnerComponent>(buffer.Length, Allocator.Temp);
+
+        for(int i = 0; i < ownerGrid.Length; ++i)
+        {
+            ownerGrid[i] = EntityManager.GetComponentData<OwnerComponent>(buffer[i].entity);
+        }
+
+
+        NativeQueue<MatchComponent> matchesQueue = new NativeQueue<MatchComponent>(Allocator.TempJob);
+
         JobHandle jobHandle = new FindMatchesInColumn()
         {
-            componentDataFromEntity = GetComponentDataFromEntity<OwnerComponent>(true),
-          
-            gridDimensions = gridDimensions,
+            board = ownerGrid,
+            colCount = gridDimensions.columnCount,
+            rowCount = gridDimensions.rowCount,
+            matchSize = matchSize.minMatchSize,
 
-            gridBuffer = EntityManager.GetBuffer<GridCellData>(gridEntity),
-            sequenceLength = 1,
-
-            commandBuffer = commandBufferSystem.CreateCommandBuffer().ToConcurrent()
+            matchesFound = matchesQueue.AsParallelWriter()
         }.Schedule(gridDimensions.rowCount, 1);
 
         commandBufferSystem.AddJobHandleForProducer(jobHandle);
 
         return jobHandle;
     }
+}
+
+struct MatchSizeRuleComponent : IComponentData
+{
+    public int minMatchSize;
 }
