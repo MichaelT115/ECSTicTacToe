@@ -20,6 +20,7 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
         [ReadOnly] public int rowCount;
         [ReadOnly] public int colCount;
         [ReadOnly] public int matchSize;
+        [DeallocateOnJobCompletion]
         [ReadOnly] public NativeArray<OwnerComponent> board;
 
         [WriteOnly] public NativeQueue<MatchComponent>.ParallelWriter matchesFound;
@@ -80,11 +81,26 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
         }
     }
 
+    public struct CreateMatchEntities : IJob
+    {
+        public NativeQueue<MatchComponent> matches;
+        public EntityCommandBuffer commandBuffer;
+
+        public void Execute()
+        {
+            while(matches.Count > 0)
+            {
+                Entity entity = commandBuffer.CreateEntity();
+                commandBuffer.AddComponent(entity, matches.Dequeue());
+            }
+        }
+    }
+
     protected override void OnCreate()
     {
         gridQuery = GetEntityQuery(typeof(GridCellData));
         gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
-        gameRulesQuery = GetEntityQuery(typeof(MatchSizeRuleComponent));
+        gameRulesQuery = GetEntityQuery(typeof(MinMatchSizeRuleComponent));
     }
 
     protected override JobHandle OnUpdate(JobHandle inputDeps)
@@ -94,16 +110,15 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
 
         EndBoardEvaluationCommandBufferSystem commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
 
-        MatchSizeRuleComponent matchSize = gameRulesQuery.GetSingleton<MatchSizeRuleComponent>();
+        MinMatchSizeRuleComponent matchSize = gameRulesQuery.GetSingleton<MinMatchSizeRuleComponent>();
 
         DynamicBuffer<GridCellData> buffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
-        NativeArray<OwnerComponent> ownerGrid = new NativeArray<OwnerComponent>(buffer.Length, Allocator.Temp);
+        NativeArray<OwnerComponent> ownerGrid = new NativeArray<OwnerComponent>(buffer.Length, Allocator.TempJob);
 
-        for(int i = 0; i < ownerGrid.Length; ++i)
+        for (int i = 0; i < ownerGrid.Length; ++i)
         {
             ownerGrid[i] = EntityManager.GetComponentData<OwnerComponent>(buffer[i].entity);
         }
-
 
         NativeQueue<MatchComponent> matchesQueue = new NativeQueue<MatchComponent>(Allocator.TempJob);
 
@@ -115,15 +130,17 @@ public class BoardEvaluationColumnsSystem : JobComponentSystem
             matchSize = matchSize.minMatchSize,
 
             matchesFound = matchesQueue.AsParallelWriter()
-        }.Schedule(gridDimensions.rowCount, 1);
+        }.Schedule(gridDimensions.columnCount, 1);
+
+        jobHandle = new CreateMatchEntities() {
+            matches = matchesQueue,
+            commandBuffer = commandBufferSystem.CreateCommandBuffer()
+        }.Schedule(jobHandle);
 
         commandBufferSystem.AddJobHandleForProducer(jobHandle);
 
-        return jobHandle;
-    }
-}
+        matchesQueue.Dispose(jobHandle);
 
-struct MatchSizeRuleComponent : IComponentData
-{
-    public int minMatchSize;
+        return inputDeps;
+    }
 }

@@ -7,104 +7,97 @@ using Unity.Jobs;
 [UpdateInGroup(typeof(BoardEvaluationUpdateGroup))]
 public class BoardEvaluationDiagonalsSystem : JobComponentSystem
 {
-    EndBoardEvaluationCommandBufferSystem commandBufferSystem;
-
     EntityQuery gridQuery;
+    EntityQuery gameStateQuery;
+    EntityQuery gameRulesQuery;
 
     [BurstCompile]
-    private struct CheckDiagonalMatchesJob : IJob
+    private struct FindDiagonalMatchesJob : IJob
     {
         [ReadOnly] public int startIndex;
-      
-        [ReadOnly] public GridDimensionsComponent gridDimensions;
         [ReadOnly] public int horizontalDirection;
+
+        [ReadOnly] public int rowCount;
+        [ReadOnly] public int colCount;
         [ReadOnly] public int minMatchSize;
-        [ReadOnly] public NativeArray<Team> teamArray;
+        [ReadOnly] public NativeArray<OwnerComponent> board;
 
         [WriteOnly] public NativeList<MatchComponent> matchesFound;
 
+        [BurstCompile]
         public void Execute()
         {
-            int colCount = gridDimensions.columnCount;
-            int rowCount = gridDimensions.rowCount;
+            int matchStartRow = GetRow(startIndex);
+            int matchStartCol = GetCol(startIndex);
 
-            int prevIndex = startIndex;
-            int currentIndex = startIndex + horizontalDirection + rowCount;
-
-            int matchStartIndex = prevIndex;
+            int currentRow = matchStartRow + 1;
+            int currentCol = matchStartCol + horizontalDirection;
             int matchSize = 1;
 
-            Team currentTeam,
-               previousTeam = teamArray[prevIndex];
+            Team currentTeam, matchTeam = board[GetIndex(matchStartRow, matchStartCol)];
 
-            while (GetRow(currentIndex) < rowCount && GetCol(currentIndex) < rowCount)
+            while (0 <= currentRow && currentRow < rowCount
+                && 0 <= currentCol && currentCol < colCount)
             {
-                currentTeam = teamArray[currentIndex];
+                currentTeam = board[GetIndex(currentRow, currentCol)];
 
-                if (currentTeam != previousTeam)
+                if (currentTeam != matchTeam)
                 {
-                    if (previousTeam != Team.EMPTY && matchSize >= minMatchSize)
+                    if (matchTeam != Team.EMPTY && matchSize >= minMatchSize)
                     {
-                        CreateMatch(prevIndex, matchStartIndex, previousTeam);
+                        int matchStartIndex = GetIndex(matchStartRow, matchStartCol);
+                        int matchEndIndex = GetIndex(currentRow - 1, currentCol - horizontalDirection);
+                        CreateMatch(matchStartIndex, matchEndIndex, matchTeam);
                     }
 
-                    matchStartIndex = currentIndex;
-                    previousTeam = currentTeam;
+                    matchStartRow = currentRow;
+                    matchStartCol = currentCol;
+                    matchTeam = currentTeam;
                     matchSize = 0;
                 }
 
 
-                prevIndex = currentIndex;
-                currentIndex += rowCount + horizontalDirection;
+                ++currentRow;
+                currentCol += horizontalDirection;
                 ++matchSize;
             }
 
-            if (previousTeam != Team.EMPTY && matchSize >= minMatchSize)
+            if (matchTeam != Team.EMPTY && matchSize >= minMatchSize)
             {
-                CreateMatch(prevIndex, matchStartIndex, previousTeam);
+                int matchStartIndex = GetIndex(matchStartRow, matchStartCol);
+                int matchEndIndex = GetIndex(currentRow - 1, currentCol - horizontalDirection);
+                CreateMatch(matchStartIndex, matchEndIndex, matchTeam);
             }
         }
 
-        private void CreateMatch(int prevIndex, int matchStartIndex, Team previousTeam)
+        private void CreateMatch(int matchStartIndex, int matchEndIndex, Team team)
         {
             matchesFound.Add(new MatchComponent()
             {
-                team = previousTeam,
+                team = team,
                 startIndex = matchStartIndex,
-                endIndex = prevIndex,
+                endIndex = matchEndIndex,
                 matchType = MatchComponent.MatchType.DIAGONAL
             });
         }
 
         private int GetRow(int index)
         {
-            return index / gridDimensions.columnCount;
+            return index / colCount;
         }
 
         private int GetCol(int index)
         {
-            return index % gridDimensions.columnCount;
+            return index % colCount;
         }
 
         private int GetIndex(int row, int col)
         {
-            return row * gridDimensions.columnCount + col % gridDimensions.columnCount;
+            return row * colCount + col % colCount;
         }
     }
 
     [BurstCompile]
-    private struct GetTeamArrayJob : IJobParallelFor
-    {
-        [ReadOnly] public ComponentDataFromEntity<OwnerComponent> componentDataFromEntity;
-        [ReadOnly] public NativeArray<GridCellData> gridDataArray;
-        [WriteOnly] public NativeArray<Team> teamArray;
-
-        public void Execute(int index)
-        {
-            teamArray[index] = componentDataFromEntity[gridDataArray[index].entity].team;
-        }
-    }
-
     private struct CreateMatchEntitiesJob : IJob
     {
         [ReadOnly] public NativeArray<MatchComponent> matchesFound;
@@ -112,144 +105,145 @@ public class BoardEvaluationDiagonalsSystem : JobComponentSystem
 
         public void Execute()
         {
-            foreach(var match in matchesFound)
+            foreach (var match in matchesFound)
             {
                 commandBuffer.AddComponent(commandBuffer.CreateEntity(), match);
             }
         }
     }
 
-    private struct DisposeTeamArray : IJob
+    private struct DeallocateNativeArray<T> : IJob
+        where T : struct
     {
         [DeallocateOnJobCompletion]
-        [ReadOnly] public NativeArray<Team> teamArray;
+        public NativeArray<T> nativeArray;
 
         public void Execute() { }
     }
 
+
     protected override void OnCreate()
     {
         gridQuery = GetEntityQuery(typeof(GridCellData));
-
-        commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
+        gameStateQuery = GetEntityQuery(typeof(GameStateComponent));
+        gameRulesQuery = GetEntityQuery(typeof(MinMatchSizeRuleComponent));
     }
 
     protected override JobHandle OnUpdate(JobHandle inputDeps)
     {
         Entity gridEntity = gridQuery.GetSingletonEntity();
         GridDimensionsComponent gridDimensions = EntityManager.GetComponentData<GridDimensionsComponent>(gridEntity);
-        NativeArray<GridCellData> gridDataArray = EntityManager.GetBuffer<GridCellData>(gridEntity).AsNativeArray();
-        NativeArray<Team> teamArray = new NativeArray<Team>(gridDataArray.Length, Allocator.TempJob);
 
-        JobHandle getTeamArrayJobHandle = new GetTeamArrayJob()
+        EndBoardEvaluationCommandBufferSystem commandBufferSystem = World.GetOrCreateSystem<EndBoardEvaluationCommandBufferSystem>();
+
+        int minMatchSize = gameRulesQuery.GetSingleton<MinMatchSizeRuleComponent>();
+
+        DynamicBuffer<GridCellData> buffer = EntityManager.GetBuffer<GridCellData>(gridEntity);
+        NativeArray<OwnerComponent> ownerGrid = new NativeArray<OwnerComponent>(buffer.Length, Allocator.TempJob);
+
+        if (buffer.Length == 0)
         {
-            componentDataFromEntity = GetComponentDataFromEntity<OwnerComponent>(true),
-            gridDataArray = gridDataArray,
-            teamArray = teamArray
-        }.Schedule(gridDataArray.Length, 1);
-
-        var jobs = CreateCheckDiagonalJobs(gridDimensions, teamArray);
-        var jobHandles = new NativeList<JobHandle>(jobs.Count, Allocator.TempJob);
-        foreach (var job in jobs)
-        {
-            JobHandle jobHandle = job.Schedule(getTeamArrayJobHandle);
-
-            jobHandle = new CreateMatchEntitiesJob()
-            {
-                matchesFound = job.matchesFound.AsDeferredJobArray(),
-                commandBuffer = commandBufferSystem.CreateCommandBuffer()
-            }.Schedule(jobHandle);
-
-            job.matchesFound.Dispose(jobHandle);
-
-
-            jobHandles.Add(jobHandle);
+            return inputDeps;
         }
 
-        var combinedJobHandles = JobHandle.CombineDependencies(jobHandles);
+        for (int i = 0; i < ownerGrid.Length; ++i)
+        {
+            ownerGrid[i] = EntityManager.GetComponentData<OwnerComponent>(buffer[i].entity);
+        }
+
+        int columnCount = gridDimensions.columnCount;
+        int rowCount = gridDimensions.rowCount;
+        int lastIndexInBoard = columnCount * rowCount;
+
+        var jobHandles = new NativeList<JobHandle>(Allocator.TempJob);
+
+        // Diagonal Checks starting from top row.
+        for (int startIndex = 0; startIndex < columnCount; ++startIndex)
+        {
+            jobHandles.Add(StartFindDiagonalMatchesJob(
+                ownerGrid: ownerGrid,
+                minMatchSize: minMatchSize,
+                columnCount: columnCount,
+                rowCount: rowCount,
+                startIndex: startIndex,
+                horizontalDirection: 1,
+                commandBufferSystem: commandBufferSystem));
+
+            jobHandles.Add(StartFindDiagonalMatchesJob(
+                ownerGrid: ownerGrid,
+                minMatchSize: minMatchSize,
+                columnCount: columnCount,
+                rowCount: rowCount,
+                startIndex: startIndex,
+                horizontalDirection: -1,
+                commandBufferSystem: commandBufferSystem));
+        }
+
+        // Diagonal Checks starting from Left Column
+        int secondIndexInLeftColumn = columnCount;
+        for (int startIndex = secondIndexInLeftColumn; startIndex < lastIndexInBoard; startIndex += rowCount)
+        {
+            jobHandles.Add(StartFindDiagonalMatchesJob(
+                ownerGrid: ownerGrid,
+                minMatchSize: minMatchSize,
+                columnCount: columnCount,
+                rowCount: rowCount,
+                startIndex: startIndex,
+                horizontalDirection: 1,
+                commandBufferSystem: commandBufferSystem));
+        }
+
+        // Diagonal Checks starting from Right Column
+        int secondIndexInRightColumn = columnCount + columnCount - 1;
+        for (int startIndex = secondIndexInRightColumn; startIndex < lastIndexInBoard; startIndex += rowCount)
+        {
+            jobHandles.Add(StartFindDiagonalMatchesJob(
+                ownerGrid: ownerGrid,
+                minMatchSize: minMatchSize,
+                columnCount: columnCount,
+                rowCount: rowCount,
+                startIndex: startIndex,
+                horizontalDirection: -1,
+                commandBufferSystem: commandBufferSystem));
+        }
+
+        new DeallocateNativeArray<OwnerComponent>()
+        {
+            nativeArray = ownerGrid
+        }.Schedule(JobHandle.CombineDependencies(jobHandles));
+
 
         jobHandles.Dispose();
 
-        commandBufferSystem.AddJobHandleForProducer(combinedJobHandles);
-
-        new DisposeTeamArray()
-        {
-            teamArray = teamArray
-        }.Schedule(combinedJobHandles);
-
-        return getTeamArrayJobHandle;
+        return inputDeps;
     }
 
-    private static List<CheckDiagonalMatchesJob> CreateCheckDiagonalJobs(GridDimensionsComponent gridDimensions, NativeArray<Team> teamArray)
+    private static JobHandle StartFindDiagonalMatchesJob(NativeArray<OwnerComponent> ownerGrid, int minMatchSize, int columnCount, int rowCount, int startIndex, int horizontalDirection, EntityCommandBufferSystem commandBufferSystem)
     {
-        int columnCount = gridDimensions.columnCount;
-        int rowCount = gridDimensions.rowCount;
-        int totalCells = rowCount * columnCount;
-
-        var jobs = new List<CheckDiagonalMatchesJob>();
-        for (int i = 0; i < columnCount; ++i)
+        NativeList<MatchComponent> matchesFound = new NativeList<MatchComponent>(Allocator.TempJob);
+        var findDiagonalMatchesJobHandle = new FindDiagonalMatchesJob()
         {
-            jobs.Add(new CheckDiagonalMatchesJob()
-            {
-                startIndex = i,
+            startIndex = startIndex,
 
-                gridDimensions = gridDimensions,
+            colCount = columnCount,
+            rowCount = rowCount,
 
-                horizontalDirection = 1,
-                minMatchSize = 1,
-                teamArray = teamArray,
+            horizontalDirection = horizontalDirection,
+            minMatchSize = minMatchSize,
+            board = ownerGrid,
+            matchesFound = matchesFound
+        }.Schedule();
 
-                matchesFound = new NativeList<MatchComponent>(Allocator.TempJob)
-            });
-
-            jobs.Add(new CheckDiagonalMatchesJob()
-            {
-                startIndex = i,
-
-                gridDimensions = gridDimensions,
-
-                horizontalDirection = -1,
-                minMatchSize = 1,
-                teamArray = teamArray,
-
-                matchesFound = new NativeList<MatchComponent>(Allocator.TempJob)
-            });
-        }
-
-        // Left Column
-        for (int i = columnCount + 1; i < totalCells; i += rowCount)
+        var createMatchEntitiesJobHandle = new CreateMatchEntitiesJob()
         {
-            jobs.Add(new CheckDiagonalMatchesJob()
-            {
-                startIndex = i,
+            matchesFound = matchesFound.AsDeferredJobArray(),
+            commandBuffer = commandBufferSystem.CreateCommandBuffer()
+        }.Schedule(findDiagonalMatchesJobHandle);
 
-                gridDimensions = gridDimensions,
+        matchesFound.Dispose(createMatchEntitiesJobHandle);
 
-                horizontalDirection = 1,
-                minMatchSize = 1,
-                teamArray = teamArray,
+        commandBufferSystem.AddJobHandleForProducer(createMatchEntitiesJobHandle);
 
-                matchesFound = new NativeList<MatchComponent>(Allocator.TempJob)
-            });
-        }
-
-        // Right Column
-        for (int i = columnCount * 2 - 1; i < totalCells; i += rowCount)
-        {
-            jobs.Add(new CheckDiagonalMatchesJob()
-            {
-                startIndex = i,
-
-                gridDimensions = gridDimensions,
-
-                horizontalDirection = -1,
-                minMatchSize = 1,
-                teamArray = teamArray,
-
-                matchesFound = new NativeList<MatchComponent>(Allocator.TempJob)
-            });
-        }
-
-        return jobs;
+        return createMatchEntitiesJobHandle;
     }
 }
